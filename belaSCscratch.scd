@@ -38,8 +38,7 @@ Routine.run {
 
 
 (
-/*this is the synth structure that will allow us to use a single PlayBuf and swing it
-around a circle of 8 speakers by controlling the volume at each speaker individually*/
+/*this is the synth structure that will allow us to determine the note played by a transducer based on the color reading*/
 ~busses = [Bus.control(s), Bus.control(s)];
 
 Routine.run {
