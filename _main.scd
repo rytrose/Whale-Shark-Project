@@ -16,7 +16,7 @@ s.options.numDigitalChannels = 16;
 
 s.options.blockSize = 16;
 s.options.numInputBusChannels = 2;
-s.options.numOutputBusChannels = 2;
+s.options.numOutputBusChannels = 2; // Need to change
 
 s.options.postln;
 
@@ -30,9 +30,12 @@ s.waitForBoot({
 	    baudrate: 9600);
 	
 	// Color values
-	~r = 0;
-	~g = 0;
-	~b = 0;
+	~avgBufferSize = 5;
+	~r = Array.new(~avgBufferSize);
+	~g = Array.new(~avgBufferSize);
+	~b = Array.new(~avgBufferSize);
+	~colorState = 0;
+	~freqBus = Bus.control(s);
 	    
 	/*this is the synth structure that will allow us to use a single PlayBuf and swing it
 	around a circle of 8 speakers by controlling the volume at each speaker individually*/
@@ -41,19 +44,59 @@ s.waitForBoot({
 	Routine.run {
 		s.bootSync;
 	
+		// Audio through analog out https://forum.bela.io/d/97-using-analog-outputs-for-audio
 		SynthDef.new("whale", {
-	        Out.ar(0, SinOsc.ar(440	) * SinOsc.ar(330) * In.kr(~busses[1]));
-	        Out.ar(1, SinOsc.ar(430) * In.kr(~busses[0]));
-		}).send(s);
+	        AnalogOut.ar(0, SinOsc.ar(440 + (440 * In.kr(~freqBus))));
+	        // AnalogOut.ar(1, SinOsc.ar(440)); //* In.kr(~busses[0]));
+		}).add;
 	
 		s.sync;
 	
 		~synth = Synth.new("whale");
 	};
 
-
+	// Read color and set proper frequency
 	Routine.run ({
-	    var byte, str;
+	    var byte, str, setColor;
+	    
+	    setColor = { arg r, g, b;
+	    	var rSum, rAvg, gSum, gAvg, bSum, bAvg;
+	   		if(~r.size < (~avgBufferSize + 1), {
+	   			~r.add(r);
+	   			~g.add(g);
+	   			~b.add(b);
+	   		}, {
+	   			~r = ~r.shift(1, filler: r);
+	   			~g = ~g.shift(1, filler: g);
+	   			~b = ~b.shift(1, filler: b);
+	   		});
+	   		
+	   		rSum = 0;
+			~r.do{ arg item, i;
+				rSum = rSum + item;
+			};
+			rAvg = rSum / ~r.size;
+			
+			gSum = 0;
+			~g.do{ arg item, i;
+				gSum = gSum + item;
+			};
+			gAvg = gSum / ~g.size;
+			
+			bSum = 0;
+			~b.do{ arg item, i;
+				bSum = bSum + item;
+			};
+			bAvg = bSum / ~b.size;
+			
+			~colorState = case
+							{(rAvg > gAvg) && (rAvg > bAvg)} {~colorState = 0}
+							{(gAvg > rAvg) && (gAvg > bAvg)} {~colorState = 1}
+							{(bAvg > rAvg) && (bAvg > gAvg)} {~colorState = 2};
+							
+			~freqBus.set(~colorState);
+		};
+	    
 	    inf.do{|i|
 	        if(p.read==10, {
 	            str = "";
@@ -62,15 +105,12 @@ s.waitForBoot({
 	            });
 	            if(str.contains("|"), {
 	            	var arr = str.split($|);
-	            	~r = arr[0].asInteger;
-	            	~g = arr[1].asInteger;
-	            	~b = arr[2].asInteger;
+	            	setColor.value(arr[0].asInteger, arr[1].asInteger, arr[2].asInteger);
 	            });
-	            ("r:"+ ~r + ", ").post;
-	            ("g:"+ ~g + ", ").post;
-	            ("b:"+ ~r).postln;
+	            
 	        });
 	    };
+	   
 	});
 	
 	// ~busses[0].set()
