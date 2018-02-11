@@ -8,6 +8,12 @@ the 12-SuperCollider/remote examples instead.
 Those files also include more code examples to interface with
 Bela-specific UGens.
 */
+
+/*this is the synth structure that will allow us to determine the note played by a transducer based on the color reading*/
+//for transducer i, bus i*2 controls volume and i*2+1 controls pitch
+var numChannels = 1;
+var busses = Array.fill(numChannels * 2, {Bus.control(s)});
+
 s = Server.default;
 
 s.options.numAnalogInChannels = 8;
@@ -35,16 +41,19 @@ s.waitForBoot({
     ~b = 0;
     ~d = 0;
 
-    /*this is the synth structure that will allow us to use a single PlayBuf and swing it
-    around a circle of 8 speakers by controlling the volume at each speaker individually*/
-    ~busses = (0..7).collect({Bus.control(s)});
 
     Routine.run {
         s.bootSync;
 
-        SynthDef.new("whaleSpeakers", {
-            AnalogOut.ar(0, SinOsc.ar(440) * SinOsc.ar(330) * In.kr(~busses[1]));
-            AnalogOut.ar(1, SinOsc.ar(430) * In.kr(~busses[0]));
+        SynthDef.new("whaleVibes", {
+            // Out.ar(0, SinOsc.ar(440) * SinOsc.ar(330) * In.kr(~busses[1]));
+            // Out.ar(1, SinOsc.ar(430) * In.kr(~busses[0]));
+            (0..(busses.size/2-1)).do({|ind|
+                var outputSignals = [SinOsc.ar(440), SinOsc.ar(220), SinOsc.ar(330)];
+                var pitchBus = In.kr(busses[ind*2+1]);
+                var condition = (pitchBus > 0.33) + (pitchBus > 0.66);
+                Out.ar(ind, Select.ar(condition, outputSignals) * In.kr(busses[ind*2]));
+            });
         }).send(s);
 
         s.sync;
@@ -83,7 +92,9 @@ s.waitForBoot({
                 });
                 ("r:"+ ~r + ", ").post;
                 ("g:"+ ~g + ", ").post;
-                ("b:"+ ~r).postln;
+                ("b:"+ ~b).postln;
+                busses[1].set(~r);
+
                 //write serial values to busses here with ~busses[i].set(val)
             });
         };

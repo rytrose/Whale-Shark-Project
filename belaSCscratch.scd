@@ -44,7 +44,8 @@ Routine.run {
 	SynthDef.new("whaleSpeakers", {
         // Out.ar(0, SinOsc.ar(440) * SinOsc.ar(330) * In.kr(busses[1]));
         // Out.ar(1, SinOsc.ar(430) * In.kr(busses[0]));
-        (0..(busses.size-1)).do({|ind| Out.ar(ind, PlayBuf.ar(1, trackBuffer, loop: 1) * In.kr(busses[ind]))});
+        var playBuf = PlayBuf.ar(1, trackBuffer, loop: 1);
+        (0..(busses.size-1)).do({|ind| Out.ar(ind, playBuf * In.kr(busses[ind]))});
 	}).send(s);
 
 	s.sync;
