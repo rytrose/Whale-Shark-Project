@@ -7,6 +7,7 @@ from within the SuperCollider IDE on your computer, check out
 the 12-SuperCollider/remote examples instead.
 Those files also include more code examples to interface with
 Bela-specific UGens.
+*/
 
 s = Server.default;
 
