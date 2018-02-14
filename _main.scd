@@ -8,26 +8,6 @@ the 12-SuperCollider/remote examples instead.
 Those files also include more code examples to interface with
 Bela-specific UGens.
  */
-var numChannels = 2;
-var busses = Array.fill(numChannels, {Bus.control(s)});
-var trackBuffer;
-var panValue = 0;
-var randWalkState = true; //true is forwards
-var markovWalk = {|pChange, state| if(1.0.rand < pChange, {state.not}, {state})};
-var walkStep = 0.005;
-var pChange = 0.05;
-var randWalkTask = Task({
-    {
-        randWalkState = markovWalk.(pChange, randWalkState);
-        panValue = (panValue + if(randWalkState, walkStep, 0-walkStep)) % numChannels;
-        //fill in calculating what two speakers are played through and by how much
-        busses[panValue.floor].set(panValue%1);
-        busses[panValue.ceil % numChannels].set(1 - (panValue%1));
-        0.01.wait;
-        // ["PAN VAL", panValue].postln;
-    }.loop;
-}); 
- 
 s = Server.default;
 
 s.options.numAnalogInChannels = 8;
@@ -40,41 +20,126 @@ s.options.numOutputBusChannels = 2; // Need to change
 
 s.options.postln;
 
-
-
 s.waitForBoot({
 	// "http://doc.sccode.org/Classes/PlayBuf.html"
 	// http://supercollider.sourceforge.net/wiki/index.php/If_statements_in_a_SynthDef
+	var avgBufferSize, rValues, gValues, bValues, distanceValues, colorStates, numSerialPorts, colorBusses, distanceBusses;
 	
-	// Read Arduino from USB port
-	p = SerialPort(
-	    "/dev/ttyACM0",
-	    baudrate: 9600);
+	"USB Ports".postln;
+	SerialPort.listDevices;
+	"-----".postln;
+	
+	SerialPort.devicePattern = "/dev/ttyUSB*";
+	numSerialPorts = SerialPort.devices.size + 1;
 	
 	// Color values
-	~avgBufferSize = 5;
-	~r = Array.new(~avgBufferSize);
-	~g = Array.new(~avgBufferSize);
-	~b = Array.new(~avgBufferSize);
-	~colorState = 0;
-	~freqBus = Bus.control(s);
-	    
+	avgBufferSize = 5;
+	rValues = Array.fill(numSerialPorts, {Array.fill(avgBufferSize, 0)});
+	gValues = Array.fill(numSerialPorts, {Array.fill(avgBufferSize, 0)});
+	bValues = Array.fill(numSerialPorts, {Array.fill(avgBufferSize, 0)});
+	distanceValues = Array.fill(numSerialPorts, 0);
+	colorStates = Array.fill(numSerialPorts, 0);
+	colorBusses = Array.fill(numSerialPorts, {Bus.control(s)});
+	distanceBusses = Array.fill(numSerialPorts, {Bus.control(s)});
+	
+	(0..(numSerialPorts-1)).do({ |index|
+	
+		var serialRoutineFunc = {
+		    var port, byte, str, setColor;
+		    
+		    if(index == 0, 
+		    	{
+		    		port = SerialPort(
+		    			"/dev/ttyACM0",
+	    				baudrate: 9600,
+	    				crtscts: true);
+		    	}, 
+		    	{
+		    		port = SerialPort(
+		    			"/dev/ttyUSB" ++ (index-1),
+	    				baudrate: 9600,
+	    				crtscts: true);
+		    	}
+		    );
+		    
+		    setColor = { arg r, g, b;
+		    	var rSum, rAvg, gSum, gAvg, bSum, bAvg;
+		    	
+		   		if(rValues[index].size < (avgBufferSize + 1), {
+		   			rValues[index].add(r);
+		   			gValues[index].add(g);
+		   			bValues[index].add(b);
+		   		}, {
+		   			rValues[index] = rValues[index].shift(1, filler: r);
+		   			gValues[index] = gValues[index].shift(1, filler: g);
+		   			bValues[index] = bValues[index].shift(1, filler: b);
+		   		});
+		   		
+		   		rSum = 0;
+				rValues[index].do{ arg item, i;
+					rSum = rSum + item;
+				};
+				rAvg = rSum / rValues[index].size;
+				
+				gSum = 0;
+				gValues[index].do{ arg item, i;
+					gSum = gSum + item;
+				};
+				gAvg = gSum / gValues[index].size;
+				
+				bSum = 0;
+				bValues[index].do{ arg item, i;
+					bSum = bSum + item;
+				};
+				bAvg = bSum / bValues[index].size;
+				
+				case
+					{(rAvg > gAvg) && (rAvg > bAvg)} {colorStates[index] = 0}
+					{(gAvg > rAvg) && (gAvg > bAvg)} {colorStates[index] = 1}
+					{(bAvg > rAvg) && (bAvg > gAvg)} {colorStates[index] = 2};
+					
+				colorBusses[index].set(colorStates[index]);
+			};
+		    
+		    inf.do{
+		    	if(port.read==10, {
+		            str = "";
+		            while({byte = port.read; byte !=13 }, {
+		                str= str++byte.asAscii;
+		            });
+		            if(str.contains("|"), {
+		            	var arr = str.split($|);
+		            	
+		            	if(arr.size < 4, 
+			            	{
+			            		[index, "Bad data"].postln;
+			            	},
+			            	{
+			            		setColor.(arr[0].asInteger, arr[1].asInteger, arr[2].asInteger);
+			            		distanceValues[index] = arr[3].asFloat;
+			            		distanceBusses[index].set(distanceValues[index]);
+			            	}
+		            	);
+		            });
+		            
+		        });
+		    };
+		};
+	
+		Routine.run(serialRoutineFunc);
+	});
+	
+	   
 	/*this is the synth structure that will allow us to use a single PlayBuf and swing it
 	around a circle of 8 speakers by controlling the volume at each speaker individually*/
-	~busses = [Bus.control(s), Bus.control(s)];
 	
 	 Routine.run {
         s.bootSync;
 
-
-		Platform.resourceDir.postln;
-        trackBuffer = Buffer.readChannel(s, Platform.resourceDir +/+ "sounds/FloatingUp_Movement02.wav", channels: [0]);
-
         SynthDef.new("whaleSpeakers", {
             // Out.ar(0, SinOsc.ar(440) * SinOsc.ar(330) * In.kr(busses[1]));
             // Out.ar(1, SinOsc.ar(430) * In.kr(busses[0]));
-            var playBuf = PlayBuf.ar(1, trackBuffer, loop: 1);
-            (0..(busses.size-1)).do({|ind| AnalogOut.ar(ind, playBuf.range(0.05, 0.95) * In.kr(busses[ind]))});
+            (0..(numSerialPorts-1)).do({|ind| AnalogOut.ar(ind, SinOsc.ar((ind+1) * 220 + (30  * In.kr(colorBusses[ind]))) * (1 - (In.kr(distanceBusses[ind]) / 50)))});
         }).send(s);
 
         s.sync;
@@ -82,68 +147,6 @@ s.waitForBoot({
         ~synth = Synth.new("whaleSpeakers");
 
         s.sync;
-
-        randWalkTask.play;
     };
-
-	// Read color and set proper frequency
-	Routine.run ({
-	    var byte, str, setColor;
-	    
-	    setColor = { arg r, g, b;
-	    	var rSum, rAvg, gSum, gAvg, bSum, bAvg;
-	   		if(~r.size < (~avgBufferSize + 1), {
-	   			~r.add(r);
-	   			~g.add(g);
-	   			~b.add(b);
-	   		}, {
-	   			~r = ~r.shift(1, filler: r);
-	   			~g = ~g.shift(1, filler: g);
-	   			~b = ~b.shift(1, filler: b);
-	   		});
-	   		
-	   		rSum = 0;
-			~r.do{ arg item, i;
-				rSum = rSum + item;
-			};
-			rAvg = rSum / ~r.size;
-			
-			gSum = 0;
-			~g.do{ arg item, i;
-				gSum = gSum + item;
-			};
-			gAvg = gSum / ~g.size;
-			
-			bSum = 0;
-			~b.do{ arg item, i;
-				bSum = bSum + item;
-			};
-			bAvg = bSum / ~b.size;
-			
-			~colorState = case
-							{(rAvg > gAvg) && (rAvg > bAvg)} {~colorState = 0}
-							{(gAvg > rAvg) && (gAvg > bAvg)} {~colorState = 1}
-							{(bAvg > rAvg) && (bAvg > gAvg)} {~colorState = 2};
-							
-			~freqBus.set(~colorState);
-		};
-	    
-	    inf.do{|i|
-	        if(p.read==10, {
-	            str = "";
-	            while({byte = p.read; byte !=13 }, {
-	                str= str++byte.asAscii;
-	            });
-	            if(str.contains("|"), {
-	            	var arr = str.split($|);
-	            	setColor.value(arr[0].asInteger, arr[1].asInteger, arr[2].asInteger);
-	            });
-	            
-	        });
-	    };
-	   
-	});
-	
-	// ~busses[0].set()
 
 });
